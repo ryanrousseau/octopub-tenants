@@ -5,24 +5,46 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+env:
+  OCTOPUS_URL: ${{ vars.OCTOPUS_SERVER_URL }}
+  OCTOPUS_APIKEY: ${{ secrets.OCTOPUS_API_KEY }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+
 jobs:
-  collect-folders:
-    name: Collect folders ⚙️
+  collect-tenants:
+    name: Collect tenants
     runs-on: ubuntu-latest
     
     outputs:
-      version: ${{ steps.version-generator.outputs.version }}
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
 
     steps:
-    - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
+      - id: set-matrix
+        run: echo "::set-output name=matrix::$(ls tenants/**/main.tf | jq -R -s -c 'split("\n")[:-1]')"
 
-    - name: Get directory names
-      id: get-directory-names
-      uses: featherweight-design/collect-directory-names-by-file-glob@v1.1
-      with:
-        file-glob: '**/*main.tf'
-        search-directory: '/tenants'
-        unique: "true"
+  check:
+    needs: [ collect-tenants ]
+    runs-on: ubuntu-latest
+    strategy:
+        matrix:
+            value: ${{ fromJson(needs.collect-tenants.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v3
 
-    - name: Use Directory Names
-      run: echo "Directory Names are ${{ steps.get-directory-names.outputs.directory-names}}
+      - name: Setup Terraform with specified version on the runner
+        uses: hashicorp/setup-terraform@v2
+        with:
+           terraform_version: 1.5.3
+
+      - run: |
+          file="${{ matrix.value }}"
+          tenant_dir=$(dirname $file)
+          basename $tenant_dir
+
+          cd $tenant_dir
+          terraform init
+          terraform plan

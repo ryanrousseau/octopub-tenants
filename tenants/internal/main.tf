@@ -1,9 +1,20 @@
 terraform {
-    required_providers {
-        octopusdeploy = {
-            source = "OctopusDeployLabs/octopusdeploy"
-        }
+  backend "azurerm" {
+    resource_group_name  = "demo.octopus.app"
+    storage_account_name = "octodemotfstate"
+    container_name       = "terraform-state"
+    key                  = "tenant-internal"
+  }
+
+  required_providers {
+    octopusdeploy = {
+      source = "OctopusDeployLabs/octopusdeploy"
     }
+  }
+}
+
+provider "azurerm" {
+   features {}
 }
 
 provider "octopusdeploy" {
