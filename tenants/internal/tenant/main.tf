@@ -21,7 +21,7 @@ provider "octopusdeploy" {
   space_id      = "Spaces-688"
 }
 
-resource "octopusdeploy_tenant" "internal" {
+resource "octopusdeploy_tenant" "tenant" {
   name                  = "_Internal"
   space_id              = "Spaces-688"
   tenant_tags           = ["Azure Account/Azure Demo Subscription", "Release Ring/Alpha", "Event Platform Hosting/Hosting Group 3", "Feature Set/SSO", "Feature Set/Custom Branding", "Rancher Token/Octopus Deploy token"]

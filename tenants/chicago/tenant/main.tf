@@ -13,12 +13,15 @@ terraform {
   }
 }
 
+provider "azurerm" {
+   features {}
+}
 
 provider "octopusdeploy" {
   space_id      = "Spaces-688"
 }
 
-resource "octopusdeploy_tenant" "chicago" {
+resource "octopusdeploy_tenant" "tenant" {
   name                  = "Chicago, IL"
   space_id              = "Spaces-688"
   tenant_tags           = ["Release Ring/Stable", "Azure Account/Azure Demo Subscription", "Rancher Token/Octopus Deploy token"]

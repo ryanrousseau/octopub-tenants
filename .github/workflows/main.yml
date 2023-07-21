@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - id: set-matrix
-        run: echo "::set-output name=matrix::$(ls tenants/**/main.tf | jq -R -s -c 'split("\n")[:-1]')"
+        run: echo "::set-output name=matrix::$(ls tenants/**/tenant/main.tf | jq -R -s -c 'split("\n")[:-1]')"
 
   check:
     needs: [ collect-tenants ]
@@ -40,11 +40,17 @@ jobs:
         with:
            terraform_version: 1.5.3
 
-      - run: |
+      - name: Terraform plan
+        run: |
           file="${{ matrix.value }}"
           tenant_dir=$(dirname $file)
-          basename $tenant_dir
 
           cd $tenant_dir
           terraform init
-          terraform plan
+          terraform plan -json -no-color -detailed-exitcode > out.json
+          changed=$?
+          line=$(tail -n 5 ./out.json | head -n 1)
+          echo "changed = $changed"
+          echo "line = $line"
+          added=$(echo $line | jq '.changes.add')
+          echo "added = $added"

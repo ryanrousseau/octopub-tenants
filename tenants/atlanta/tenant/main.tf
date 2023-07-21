@@ -13,12 +13,15 @@ terraform {
   }
 }
 
+provider "azurerm" {
+   features {}
+}
 
 provider "octopusdeploy" {
   space_id      = "Spaces-688"
 }
 
-resource "octopusdeploy_tenant" "atlanta" {
+resource "octopusdeploy_tenant" "tenant" {
   cloned_from_tenant_id = "Tenants-934"
   name                  = "Atlanta, GA"
   space_id              = "Spaces-688"
