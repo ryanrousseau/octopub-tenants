@@ -1,0 +1,28 @@
+name: Main workflow
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  collect-folders:
+    name: Collect folders ⚙️
+    runs-on: ubuntu-latest
+    
+    outputs:
+      version: ${{ steps.version-generator.outputs.version }}
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Get directory names
+      id: get-directory-names
+      uses: featherweight-design/collect-directory-names-by-file-glob@v1.1
+      with:
+        file-glob: '**/*main.tf'
+        search-directory: '/tenants'
+        unique: "true"
+
+    - name: Use Directory Names
+      run: echo "Directory Names are ${{ steps.get-directory-names.outputs.directory-names}}
