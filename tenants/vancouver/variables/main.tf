@@ -3,7 +3,7 @@ terraform {
     resource_group_name  = "demo.octopus.app"
     storage_account_name = "octodemotfstate"
     container_name       = "terraform-state"
-    key                  = "tenant-variables-dallas"
+    key                  = "tenant-variables-vancouver"
   }
 
   required_providers {

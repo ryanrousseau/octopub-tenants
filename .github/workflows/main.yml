@@ -7,7 +7,7 @@ on:
 
 env:
   OCTOPUS_URL: ${{ vars.OCTOPUS_SERVER_URL }}
-  OCTOPUS_APIKEY: ${{ secrets.OCTOPUS_API_KEY }}
+  OCTOPUS_APIKEY: ${{ secrets.OCTOPUS_API_KEY_TF }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
@@ -24,9 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - id: set-matrix
-        run: echo "::set-output name=matrix::$(ls tenants/**/tenant/main.tf | jq -R -s -c 'split("\n")[:-1]')"
+        run: echo "matrix=$(ls tenants/**/tenant/main.tf | jq -R -s -c 'split("\n")[:-1]')" >> $GITHUB_OUTPUT
 
-  check:
+  configure-tenants:
+    name: Configure tenants
     needs: [ collect-tenants ]
     runs-on: ubuntu-latest
     strategy:
@@ -35,22 +36,131 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Install Octopus CLI 🐙
+        uses: OctopusDeploy/install-octopus-cli-action@v3
+
       - name: Setup Terraform with specified version on the runner
         uses: hashicorp/setup-terraform@v2
         with:
            terraform_version: 1.5.3
+           terraform_wrapper: false
 
       - name: Terraform plan
+        id: terrafrom-plan
+        run: |
+          file="${{ matrix.value }}"
+          tenant_dir=$(dirname $file)
+          tenant=$(basename $(dirname $tenant_dir))
+
+          cd $tenant_dir
+          terraform init
+          terraform plan -json -no-color > out.json
+          line=$(tail -n 2 ./out.json | head -n 1)
+          echo "line = $line"
+          add=$(echo $line | jq '.changes.add')
+          change=$(echo $line | jq '.changes.change')
+          remove=$(echo $line | jq '.changes.remove')
+          apply_plan=$(( $add + $change + $remove ))
+          #echo "apply = $apply_plan"
+          echo "apply_plan=$apply_plan" >> $GITHUB_OUTPUT
+          echo "call_runbook=$add" >> $GITHUB_OUTPUT
+          echo "tenant_key=$tenant" >> $GITHUB_OUTPUT
+
+      - name: Apply tenant template
+        id: apply-tenant
         run: |
           file="${{ matrix.value }}"
           tenant_dir=$(dirname $file)
 
           cd $tenant_dir
+          terraform apply -auto-approve
+
+          terraform output tenant_name
+          terraform output environment_name
+
+          #tenant=$(printf %q "$(terraform output tenant_name | tr -d '"')")
+          #environment=$(printf %q "$(terraform output environment_name | tr -d '"')")
+          tenant="$(terraform output tenant_name | tr -d '"')"
+          tenant_id="$(terraform output tenant_id | tr -d '"')"
+          environment="$(terraform output environment_name | tr -d '"')"
+          echo "tenant=$tenant" >> $GITHUB_OUTPUT
+          echo "tenant_id=$tenant_id" >> $GITHUB_OUTPUT
+          echo "environment=$environment" >> $GITHUB_OUTPUT
+
+      - name: Apply variables template
+        run: |
+          file="${{ matrix.value }}"
+          tenant_dir=$(dirname $file)
+
+          cd $tenant_dir
+          cd ../variables
+
+          tenant_key=${{ steps.terrafrom-plan.outputs.tenant_key }}
+          tenant_id=${{ steps.apply-tenant.outputs.tenant_id }}
+
           terraform init
-          terraform plan -json -no-color -detailed-exitcode > out.json
-          changed=$?
-          line=$(tail -n 5 ./out.json | head -n 1)
-          echo "changed = $changed"
-          echo "line = $line"
-          added=$(echo $line | jq '.changes.add')
-          echo "added = $added"
+          terraform apply -auto-approve -var="tenant_id=$tenant_id" -var="cluster_name=$tenant_key"
+
+      - name: Run infrastructure runbook 🐙
+        id: create-infrastructure
+        if: steps.terrafrom-plan.outputs.call_runbook != 0
+        uses: OctopusDeploy/run-runbook-action@v3
+        env:
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY_TF  }}
+          OCTOPUS_URL: ${{ vars.OCTOPUS_SERVER_URL }}
+          OCTOPUS_SPACE: White Rock Global
+        with:
+          project: 'Admin - Cluster'
+          runbook: 'Create and register cluster'
+          environments: |
+            ${{ steps.apply-tenant.outputs.environment }}
+          tenants: |
+            ${{ steps.apply-tenant.outputs.tenant }}
+
+      - uses: OctopusDeploy/await-task-action@v3
+        name: Wait for infrastructure 🐙
+        id: "wait-for-runbook"
+        if: steps.terrafrom-plan.outputs.call_runbook != 0
+        env:
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY_TF  }}
+          OCTOPUS_URL: ${{ vars.OCTOPUS_SERVER_URL }}
+          OCTOPUS_SPACE: White Rock Global
+        with:
+          server_task_id: ${{ fromJson(steps.create-infrastructure.outputs.server_tasks)[0].serverTaskId }}
+
+      - name: "Get latest release version 🐙"
+        id: "get-latest-version"
+        if: steps.terrafrom-plan.outputs.call_runbook != 0
+        env:
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY_TF  }}
+          OCTOPUS_URL: ${{ vars.OCTOPUS_SERVER_URL }}
+        run: |
+          version=$(octopus release list -s 'White Rock Global' -p 'All Octopub' -f 'json' | jq '.[0].Version' | tr -d '"')
+          echo "Latest version of Octopub is $version"
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - uses: OctopusDeploy/deploy-release-tenanted-action@v3
+        id: "deploy-release"
+        name: "Deploy Octopub to new tenant 🐙"
+        if: steps.terrafrom-plan.outputs.call_runbook != 0
+        env:
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY_TF  }}
+          OCTOPUS_URL: ${{ vars.OCTOPUS_SERVER_URL }}
+          OCTOPUS_SPACE: White Rock Global
+        with:
+          project: "All Octopub"
+          release_number: ${{ steps.get-latest-version.outputs.version }}
+          environment: ${{ steps.apply-tenant.outputs.environment }}
+          tenants: |
+            ${{ steps.apply-tenant.outputs.tenant }}
+
+      - uses: OctopusDeploy/await-task-action@v3
+        name: Wait for deployment 🐙
+        id: "wait-for-deployment"
+        if: steps.terrafrom-plan.outputs.call_runbook != 0
+        env:
+          OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY_TF  }}
+          OCTOPUS_URL: ${{ vars.OCTOPUS_SERVER_URL }}
+          OCTOPUS_SPACE: White Rock Global
+        with:
+          server_task_id: ${{ fromJson(steps.deploy-release.outputs.server_tasks)[0].serverTaskId }}
